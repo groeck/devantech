@@ -305,7 +305,7 @@ static int devantech_usb_xfer(struct i2c_adapter *adapter, struct i2c_msg *msgs,
 		for (i = 0; i < len; i++)
 			pmsg->buf[i] = dev->buffer[i + 2];
 	}
-	ret = 0;
+	ret = num;
 error:
 	return ret;
 }
