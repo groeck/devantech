@@ -76,7 +76,7 @@ struct i2c_devantech_iss {
 	int ep_out, ep_in;
 };
 
-static uint frequency = 100000;	/* I2C clock frequency in Hz */
+static uint frequency = 400000;	/* I2C clock frequency in Hz */
 module_param(frequency, uint, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(frequency, "I2C clock frequency in hertz");
 
@@ -169,15 +169,15 @@ static int devantech_init(struct i2c_devantech_iss *dev)
 	 * stretching, at least not with firmware version 7.2. The PIC hardware
 	 * implementation supports it, so select the hardware protocol if
 	 * available for a given bus speed.
-	 * If the bus speed is not configured or set to 0, select 100kHz.
+	 * If the bus speed is not configured or set to 0, select 400kHz.
 	 */
 	if (frequency >= 1000000) {
 		speed = ISS_MODE_I2C_H_1000KHZ;
 		frequency = 1000000;
-	} else if (frequency >= 400000) {
+	} else if (frequency >= 400000 || frequency == 0) {
 		speed = ISS_MODE_I2C_H_400KHZ;
 		frequency = 400000;
-	} else if (frequency >= 100000 || frequency == 0) {
+	} else if (frequency >= 100000) {
 		speed = ISS_MODE_I2C_H_100KHZ;
 		frequency = 100000;
 	} else if (frequency >= 50000) {
@@ -304,8 +304,9 @@ static int devantech_usb_xfer(struct i2c_adapter *adapter, struct i2c_msg *msgs,
 		}
 		for (i = 0; i < len; i++)
 			pmsg->buf[i] = dev->buffer[i + 2];
+		pmsg->len = len;
 	}
-	ret = 0;
+	ret = num;
 error:
 	return ret;
 }
