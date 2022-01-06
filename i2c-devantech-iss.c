@@ -12,13 +12,18 @@
  * published by the Free Software Foundation, version 2.
  */
 
-#include <linux/kernel.h>
 #include <linux/errno.h>
-#include <linux/module.h>
-#include <linux/types.h>
-#include <linux/slab.h>
-#include <linux/usb.h>
 #include <linux/i2c.h>
+#include <linux/i2c-smbus.h>
+#include <linux/kernel.h>
+#include <linux/module.h>
+#include <linux/slab.h>
+#include <linux/types.h>
+#include <linux/usb.h>
+#include <linux/workqueue.h>
+
+#define USE_ALERT
+#define ALERT_POLL_TIME_MS	100
 
 #define DRIVER_NAME		"i2c-devantech-iss"
 
@@ -74,6 +79,11 @@ struct i2c_devantech_iss {
 	struct usb_device *usb_dev;	/* the usb device for this device */
 	struct i2c_adapter adapter;	/* i2c related things */
 	int ep_out, ep_in;
+#ifdef USE_ALERT
+	struct i2c_smbus_alert_setup alert_setup;
+	struct i2c_client *ara;
+	struct delayed_work ara_work;
+#endif
 };
 
 static uint frequency = 400000;	/* I2C clock frequency in Hz */
@@ -340,6 +350,28 @@ static void devantech_iss_free(struct i2c_devantech_iss *dev)
 	kfree(dev);
 }
 
+#ifdef USE_ALERT
+static void devantech_iss_work(struct work_struct *__work)
+{
+        struct delayed_work *delayed_work =
+		container_of(__work, struct delayed_work, work);
+	struct i2c_devantech_iss *dev =
+		container_of(delayed_work, struct i2c_devantech_iss, ara_work);
+	static int last_alert;
+	int timeout = ALERT_POLL_TIME_MS, ret;
+
+	ret = i2c_smbus_read_byte(dev->ara);
+	if (ret >= 0) {
+		// dev_dbg(&dev->ara->dev, "Got alert 0x%x\n", ret);
+		i2c_handle_smbus_alert(dev->ara);
+		if (ret == last_alert)
+			timeout = ALERT_POLL_TIME_MS * 10;
+	}
+	last_alert = ret;
+	schedule_delayed_work(delayed_work, msecs_to_jiffies(timeout));
+}
+#endif /* USE_ALERT */
+
 static int devantech_iss_probe(struct usb_interface *interface,
 			       const struct usb_device_id *id)
 {
@@ -436,6 +468,18 @@ static int devantech_iss_probe(struct usb_interface *interface,
 		goto error_release;
 	}
 
+#ifdef USE_ALERT
+	dev->ara = i2c_new_smbus_alert_device(&dev->adapter, &dev->alert_setup);
+	if (IS_ERR(dev->ara)) {
+		ret = PTR_ERR(dev->ara);
+		i2c_del_adapter(&dev->adapter);
+		goto error_release;
+	}
+
+	INIT_DELAYED_WORK(&dev->ara_work, devantech_iss_work);
+	schedule_delayed_work(&dev->ara_work, msecs_to_jiffies(20));
+#endif
+
 	dev_info(&interface->dev, "connected\n");
 	return 0;
 
@@ -459,6 +503,10 @@ static void devantech_iss_disconnect(struct usb_interface *interface)
 	if (alt->desc.bInterfaceNumber)
 		return;
 
+#ifdef USE_ALERT
+	cancel_delayed_work_sync(&dev->ara_work);
+	i2c_unregister_device(dev->ara);
+#endif
 	i2c_del_adapter(&dev->adapter);
 	usb_set_intfdata(interface, NULL);
 	usb_set_intfdata(dev->usb_if, NULL);
