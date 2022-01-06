@@ -86,7 +86,7 @@ struct i2c_devantech_iss {
 #endif
 };
 
-static uint frequency = 400000;	/* I2C clock frequency in Hz */
+static uint frequency = 100000;	/* I2C clock frequency in Hz */
 module_param(frequency, uint, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(frequency, "I2C clock frequency in hertz");
 
@@ -269,10 +269,8 @@ static int devantech_usb_xfer(struct i2c_adapter *adapter, struct i2c_msg *msgs,
 				 * need two additional bytes, one for the write
 				 * command itself and one for the STOP command.
 				 */
-				if (len + clen > ISS_MAX_TRANSFER_LEN - 2) {
-					ret = -EINVAL;
-					goto error;
-				}
+				if (len + clen > ISS_MAX_TRANSFER_LEN - 2)
+					return -EINVAL;
 				dev->buffer[len++] = ISS_I2C_WRITE(clen);
 				for (j = 0; j < clen; j++)
 					dev->buffer[len++]
@@ -283,17 +281,16 @@ static int devantech_usb_xfer(struct i2c_adapter *adapter, struct i2c_msg *msgs,
 	dev->buffer[len++] = ISS_I2C_STOP;
 
 	ret = devantech_usb_transfer(dev, len);
-	if (ret < 0)
-		goto error;
-
-	if (ret < 2) {
-		ret = -EIO;
-		goto error;
+	if (ret < 0) {
+		dev_err(&dev->interface->dev, "USB transfer error %d\n", ret);
+		return ret;
 	}
 
+	if (ret < 2)
+		return -EIO;
+
 	if (dev->buffer[0] == ISS_RESP_NACK) {
-		ret = dev->buffer[1] == ISS_RESP_DEV_ERROR ? -ENXIO : -EIO;
-		goto error;
+		return dev->buffer[1] == ISS_RESP_DEV_ERROR ? -ENXIO : -EIO;
 	}
 
 	/*
@@ -302,11 +299,8 @@ static int devantech_usb_xfer(struct i2c_adapter *adapter, struct i2c_msg *msgs,
 	if (pmsg->flags & I2C_M_RD) {
 		if (pmsg->flags & I2C_M_RECV_LEN) {
 			rlen = dev->buffer[2];
-			if (rlen == 0 || rlen > I2C_SMBUS_BLOCK_MAX ||
-			    rlen > ret - 2) {
-				ret = -EPROTO;
-				goto error;
-			}
+			if (rlen == 0 || rlen > I2C_SMBUS_BLOCK_MAX || rlen > ret - 2)
+				return -EPROTO;
 			pmsg->len += rlen;
 			len = pmsg->len;
 		} else {
@@ -317,7 +311,6 @@ static int devantech_usb_xfer(struct i2c_adapter *adapter, struct i2c_msg *msgs,
 		pmsg->len = len;
 	}
 	ret = num;
-error:
 	return ret;
 }
 
@@ -382,11 +375,8 @@ static int devantech_iss_probe(struct usb_interface *interface,
 
 	/* allocate memory for our device state and initialize it */
 	dev = kzalloc(sizeof(*dev), GFP_KERNEL);
-	if (dev == NULL) {
-		dev_err(&interface->dev, "no memory for device state\n");
-		ret = -ENOMEM;
-		goto error;
-	}
+	if (dev == NULL)
+		return -ENOMEM;
 
 	dev->usb_dev = usb_get_dev(interface_to_usbdev(interface));
 	dev->interface = interface;
@@ -491,7 +481,6 @@ error_put:
 	usb_put_intf(dev->usb_if);
 error_free:
 	devantech_iss_free(dev);
-error:
 	return ret;
 }
 
