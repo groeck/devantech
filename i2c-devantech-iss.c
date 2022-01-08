@@ -379,10 +379,35 @@ static int devantech_iss_probe(struct usb_interface *interface,
 	struct usb_endpoint_descriptor *ep_out, *ep_in;
 	struct i2c_devantech_iss *dev;
 	struct usb_interface *usb_if;
+	struct usb_device *usb_dev;
 	int ret;
 
 	/* Only accept probe on control interface */
 	if (hostif->desc.bInterfaceNumber != 0 || hostif->desc.bNumEndpoints < 1)
+		return -ENODEV;
+
+	usb_dev = interface_to_usbdev(interface);
+	usb_if = usb_ifnum_to_if(usb_dev, 1);
+	if (!usb_if) {
+		dev_err(&interface->dev, "no USB interface\n");
+		return -ENODEV;
+	}
+	if (usb_interface_claimed(usb_if)) {
+		dev_err(&interface->dev, "USB interface busy\n");
+		return -EBUSY;
+	}
+	hostif = usb_if->cur_altsetting;
+	if (hostif->desc.bNumEndpoints < 2) {
+		dev_err(&interface->dev,
+			"insufficient number of USB endpoints\n");
+		return -EINVAL;
+	}
+
+	ep_out = &hostif->endpoint[0].desc;
+	if (!usb_endpoint_is_bulk_out(ep_out))
+		return -ENODEV;
+	ep_in = &hostif->endpoint[1].desc;
+	if (!usb_endpoint_is_bulk_in(ep_in))
 		return -ENODEV;
 
 	/* allocate memory for our device state and initialize it */
@@ -390,8 +415,11 @@ static int devantech_iss_probe(struct usb_interface *interface,
 	if (dev == NULL)
 		return -ENOMEM;
 
-	dev->usb_dev = interface_to_usbdev(interface);
+	dev->usb_dev = usb_dev;
 	dev->interface = interface;
+	dev->ep_out = ep_out->bEndpointAddress;
+	dev->ep_in = ep_in->bEndpointAddress;
+	dev->usb_if = usb_if;
 
 	/* setup i2c adapter description */
 	dev->adapter.owner = THIS_MODULE;
@@ -403,45 +431,15 @@ static int devantech_iss_probe(struct usb_interface *interface,
 		 DRIVER_NAME " at bus %03d device %03d",
 		 dev->usb_dev->bus->busnum, dev->usb_dev->devnum);
 
-	dev->adapter.dev.parent = &dev->interface->dev;
-
-	usb_if = usb_ifnum_to_if(dev->usb_dev, 1);
-	if (!usb_if) {
-		dev_err(&interface->dev, "no USB interface\n");
-		ret = -ENODEV;
-		goto error_free;
-	}
-	if (usb_interface_claimed(usb_if)) {
-		dev_err(&interface->dev, "USB interface busy\n");
-		ret = -EBUSY;
-		goto error_free;
-	}
-	hostif = usb_if->cur_altsetting;
-	if (hostif->desc.bNumEndpoints < 2) {
-		dev_err(&interface->dev,
-			"insufficient number of USB endpoints\n");
-		ret = -EINVAL;
-		goto error_free;
-	}
-
-	ep_out = &hostif->endpoint[0].desc;
-	if (!usb_endpoint_is_bulk_out(ep_out))
-		return -ENODEV;
-	ep_in = &hostif->endpoint[1].desc;
-	if (!usb_endpoint_is_bulk_in(ep_in))
-		return -ENODEV;
-	dev->ep_out = ep_out->bEndpointAddress;
-	dev->ep_in = ep_in->bEndpointAddress;
-	dev->usb_if = usb_if;
+	dev->adapter.dev.parent = &interface->dev;
 
 	/*
 	 * We need to claim the data interface to prevent other drivers
 	 * from accessing and registering it.
 	 */
-	ret = usb_driver_claim_interface(&devantech_iss_driver,
-					 dev->usb_if, dev);
+	ret = usb_driver_claim_interface(&devantech_iss_driver, usb_if, dev);
 	if (ret < 0) {
-		dev_err(&usb_if->dev, "failed to claim interface\n");
+		dev_err(&usb_if->dev, "failed to claim USB data interface\n");
 		goto error_free;
 	}
 
