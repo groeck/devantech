@@ -1,6 +1,13 @@
 This driver interfers with the USB cdc-acm driver. Therefore, you will have to
 blacklist it. You can do this by adding an entry "blacklist cdc-acm" into one of
-the files in /etc/modprobe.d.
+the files in /etc/modprobe.d. An alternative is to add an ignore entry for
+Devantech USB-ISS into acm_ids[] in drivers/usb/class/cdc-acm.c.
+
++       /* Exclude Devantech USB-ISS */
++       { USB_DEVICE(0x04d8, 0xffee),
++       .driver_info = IGNORE_DEVICE,
++       },
++
 
 Also, it is useful to add "i2c-devantech-iss" to /etc/modules to ensure that the
 driver is loaded automatically during system startup to ensure that the device
