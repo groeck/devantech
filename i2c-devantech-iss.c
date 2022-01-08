@@ -23,7 +23,7 @@
 #include <linux/workqueue.h>
 
 #define USE_ALERT
-#define ALERT_POLL_TIME_MS	100
+#define ALERT_POLL_TIME_MS	50
 
 #define DRIVER_NAME		"i2c-devantech-iss"
 
@@ -350,18 +350,31 @@ static void devantech_iss_work(struct work_struct *__work)
 		container_of(__work, struct delayed_work, work);
 	struct i2c_devantech_iss *dev =
 		container_of(delayed_work, struct i2c_devantech_iss, ara_work);
-	static int last_alert;
-	int timeout = ALERT_POLL_TIME_MS, ret;
+	static int last_alert, count;
+	int ret;
 
 	ret = i2c_smbus_read_byte(dev->ara);
 	if (ret >= 0) {
-		// dev_dbg(&dev->ara->dev, "Got alert 0x%x\n", ret);
-		i2c_handle_smbus_alert(dev->ara);
+		/*
+		 * Do not keep passing the same alert to the alert handler.
+		 * If alert is stuck, log once as debug message to inform
+		 * the user that there is a potential problem.
+		 */
+		if (ret != last_alert || !(count % 20)) {
+			if (count == 20)
+				dev_dbg(&dev->ara->dev, "alert stuck for address 0x%x\n", ret);
+			dev_dbg(&dev->ara->dev, "reporting alert for 0x%x\n", ret);
+			i2c_handle_smbus_alert(dev->ara);
+		}
 		if (ret == last_alert)
-			timeout = ALERT_POLL_TIME_MS * 10;
+			count++;
+		else
+			count = 0;
+	} else {
+		count = 0;
 	}
 	last_alert = ret;
-	schedule_delayed_work(delayed_work, msecs_to_jiffies(timeout));
+	schedule_delayed_work(delayed_work, msecs_to_jiffies(ALERT_POLL_TIME_MS));
 }
 #endif /* USE_ALERT */
 
