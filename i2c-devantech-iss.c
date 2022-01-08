@@ -337,12 +337,6 @@ static const struct usb_device_id devantech_iss_table[] = {
 
 MODULE_DEVICE_TABLE(usb, devantech_iss_table);
 
-static void devantech_iss_free(struct i2c_devantech_iss *dev)
-{
-	usb_put_dev(dev->usb_dev);
-	kfree(dev);
-}
-
 #ifdef USE_ALERT
 static void devantech_iss_work(struct work_struct *__work)
 {
@@ -396,7 +390,7 @@ static int devantech_iss_probe(struct usb_interface *interface,
 	if (dev == NULL)
 		return -ENOMEM;
 
-	dev->usb_dev = usb_get_dev(interface_to_usbdev(interface));
+	dev->usb_dev = interface_to_usbdev(interface);
 	dev->interface = interface;
 
 	/* setup i2c adapter description */
@@ -438,7 +432,7 @@ static int devantech_iss_probe(struct usb_interface *interface,
 		return -ENODEV;
 	dev->ep_out = ep_out->bEndpointAddress;
 	dev->ep_in = ep_in->bEndpointAddress;
-	dev->usb_if = usb_get_intf(usb_if);
+	dev->usb_if = usb_if;
 
 	/*
 	 * We need to claim the data interface to prevent other drivers
@@ -448,7 +442,7 @@ static int devantech_iss_probe(struct usb_interface *interface,
 					 dev->usb_if, dev);
 	if (ret < 0) {
 		dev_err(&usb_if->dev, "failed to claim interface\n");
-		goto error_put;
+		goto error_free;
 	}
 
 	/* save our data pointer in this interface device */
@@ -487,10 +481,8 @@ error_release:
 	usb_set_intfdata(interface, NULL);
 	usb_set_intfdata(dev->usb_if, NULL);
 	usb_driver_release_interface(&devantech_iss_driver, dev->usb_if);
-error_put:
-	usb_put_intf(dev->usb_if);
 error_free:
-	devantech_iss_free(dev);
+	kfree(dev);
 	return ret;
 }
 
@@ -510,8 +502,7 @@ static void devantech_iss_disconnect(struct usb_interface *interface)
 	usb_set_intfdata(interface, NULL);
 	usb_set_intfdata(dev->usb_if, NULL);
 	usb_driver_release_interface(&devantech_iss_driver, dev->usb_if);
-	usb_put_intf(dev->usb_if);
-	devantech_iss_free(dev);
+	kfree(dev);
 
 	dev_info(&interface->dev, "disconnected\n");
 }
