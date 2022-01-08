@@ -381,10 +381,15 @@ static void devantech_iss_work(struct work_struct *__work)
 static int devantech_iss_probe(struct usb_interface *interface,
 			       const struct usb_device_id *id)
 {
+	struct usb_host_interface *hostif = interface->cur_altsetting;
+	struct usb_endpoint_descriptor *ep_out, *ep_in;
 	struct i2c_devantech_iss *dev;
-	int ret;
 	struct usb_interface *usb_if;
-	struct usb_host_endpoint *ep_out, *ep_in;
+	int ret;
+
+	/* Only accept probe on control interface */
+	if (hostif->desc.bInterfaceNumber != 0 || hostif->desc.bNumEndpoints < 1)
+		return -ENODEV;
 
 	/* allocate memory for our device state and initialize it */
 	dev = kzalloc(sizeof(*dev), GFP_KERNEL);
@@ -406,14 +411,6 @@ static int devantech_iss_probe(struct usb_interface *interface,
 
 	dev->adapter.dev.parent = &dev->interface->dev;
 
-	/* Only accept probe on control interface */
-	usb_if = usb_ifnum_to_if(dev->usb_dev, 0);
-	if (usb_if != interface) {
-		dev_err(&interface->dev, "not on control interface\n");
-		ret = -ENODEV;
-		goto error_free;
-	}
-
 	usb_if = usb_ifnum_to_if(dev->usb_dev, 1);
 	if (!usb_if) {
 		dev_err(&interface->dev, "no USB interface\n");
@@ -425,22 +422,22 @@ static int devantech_iss_probe(struct usb_interface *interface,
 		ret = -EBUSY;
 		goto error_free;
 	}
-	if (usb_if->cur_altsetting->desc.bNumEndpoints < 2) {
+	hostif = usb_if->cur_altsetting;
+	if (hostif->desc.bNumEndpoints < 2) {
 		dev_err(&interface->dev,
 			"insufficient number of USB endpoints\n");
 		ret = -EINVAL;
 		goto error_free;
 	}
 
-	ep_out = &usb_if->cur_altsetting->endpoint[0];
-	ep_in = &usb_if->cur_altsetting->endpoint[1];
-	if (!ep_out || !ep_in) {
-		dev_err(&interface->dev, "missing USB endpoints\n");
-		ret = -EINVAL;
-		goto error_free;
-	}
-	dev->ep_out = ep_out->desc.bEndpointAddress;
-	dev->ep_in = ep_in->desc.bEndpointAddress;
+	ep_out = &hostif->endpoint[0].desc;
+	if (!usb_endpoint_is_bulk_out(ep_out))
+		return -ENODEV;
+	ep_in = &hostif->endpoint[1].desc;
+	if (!usb_endpoint_is_bulk_in(ep_in))
+		return -ENODEV;
+	dev->ep_out = ep_out->bEndpointAddress;
+	dev->ep_in = ep_in->bEndpointAddress;
 	dev->usb_if = usb_get_intf(usb_if);
 
 	/*
