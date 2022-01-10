@@ -362,11 +362,7 @@ static void devantech_iss_work(struct work_struct *__work)
 
 	ret = i2c_smbus_read_byte(dev->ara);
 	if (ret > 0 && ret != 0xff) {
-		/*
-		 * Do not keep passing the same alert to the alert handler.
-		 * If alert is stuck, log once as debug message to inform
-		 * the user that there is a potential problem.
-		 */
+		/* Do not keep passing the same alert to the alert handler */
 		if (ret != last_alert || time_after(jiffies, last_alert_time + HZ)) {
 			dev_dbg(&dev->ara->dev, "reporting alert for 0x%x\n", ret);
 			i2c_handle_smbus_alert(dev->ara);
