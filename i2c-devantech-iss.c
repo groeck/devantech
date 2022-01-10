@@ -67,7 +67,17 @@
 #define ISS_RESP_UNDERFLOW	0x03
 #define ISS_RESP_UNKNOWN_CMD	0x04
 
-#define ISS_USB_TIMEOUT		100	/* in ms */
+/*
+ * If the adapter experiences a USB timeout (for example because SCL
+ * is pulled low), its USB bus hangs and does not recover until power
+ * cycled. Therefore we can not implement a USB timeout but have to
+ * wait forever until the adapter replies.
+ * Note that this only works with I2C bitbang mode. The adapter still
+ * hangs if SCL is pulled low for an extended period of time and a
+ * hardware speed mode is selected.
+ */
+#define ISS_USB_TIMEOUT		0	/* forever */
+// #define ISS_USB_TIMEOUT		1000	/* in ms */
 
 #define ISS_MAX_TRANSFER_LEN	60
 
@@ -180,15 +190,17 @@ static int devantech_init(struct i2c_devantech_iss *dev)
 	 * implementation supports it, so select the hardware protocol if
 	 * available for a given bus speed.
 	 * If the bus speed is not configured or set to 0, select 400kHz.
+	 * Use bitbang mode where possible to avoid adapter hangup if SCL
+	 * is pulled low.
 	 */
 	if (frequency >= 1000000) {
 		speed = ISS_MODE_I2C_H_1000KHZ;
 		frequency = 1000000;
 	} else if (frequency >= 400000 || frequency == 0) {
-		speed = ISS_MODE_I2C_H_400KHZ;
+		speed = ISS_MODE_I2C_S_400KHZ;
 		frequency = 400000;
 	} else if (frequency >= 100000) {
-		speed = ISS_MODE_I2C_H_100KHZ;
+		speed = ISS_MODE_I2C_S_100KHZ;
 		frequency = 100000;
 	} else if (frequency >= 50000) {
 		speed = ISS_MODE_I2C_S_50KHZ;
@@ -344,30 +356,24 @@ static void devantech_iss_work(struct work_struct *__work)
 		container_of(__work, struct delayed_work, work);
 	struct i2c_devantech_iss *dev =
 		container_of(delayed_work, struct i2c_devantech_iss, ara_work);
-	static int last_alert, count;
+	static unsigned long last_alert_time;
+	static int last_alert;
 	int ret;
 
 	ret = i2c_smbus_read_byte(dev->ara);
-	if (ret >= 0) {
+	if (ret > 0 && ret != 0xff) {
 		/*
 		 * Do not keep passing the same alert to the alert handler.
 		 * If alert is stuck, log once as debug message to inform
 		 * the user that there is a potential problem.
 		 */
-		if (ret != last_alert || !(count % 20)) {
-			if (count == 20)
-				dev_dbg(&dev->ara->dev, "alert stuck for address 0x%x\n", ret);
+		if (ret != last_alert || time_after(jiffies, last_alert_time + HZ)) {
 			dev_dbg(&dev->ara->dev, "reporting alert for 0x%x\n", ret);
 			i2c_handle_smbus_alert(dev->ara);
+			last_alert_time = jiffies;
 		}
-		if (ret == last_alert)
-			count++;
-		else
-			count = 0;
-	} else {
-		count = 0;
+		last_alert = ret;
 	}
-	last_alert = ret;
 	schedule_delayed_work(delayed_work, msecs_to_jiffies(ALERT_POLL_TIME_MS));
 }
 #endif /* USE_ALERT */
